@@ -10,6 +10,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -25,18 +26,27 @@ public class UdpStreamingClient : MonoBehaviour {
     private IPEndPoint groupEP;
 
     private const int MATRIX_BUFFER_LEN = 256;
-    private byte[] matrixBufferData = new byte[MATRIX_BUFFER_LEN];
 
-    private float[] floatBufferData = new float[MATRIX_BUFFER_LEN / 4];
-    private readonly float[] identifyBufferData = {
-        1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,
-        1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,
-        1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,
-        1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
+    // Raw bytes from SGCt
+    private byte[] rawBufferData = new byte[MATRIX_BUFFER_LEN];
+    // Turn bytes into float array
+    private float[] floatBufferData = new float[MATRIX_BUFFER_LEN / sizeof(float)];
+    // Return identity if things haven't finished yet
+    private readonly Matrix4x4[] identityMatrixBufferData = {
+        new Matrix4x4(new Vector4(1,0,0,0), new Vector4(0,1,0,0), new Vector4(0,0,1,0), new Vector4(0,0,0,1)),
+        new Matrix4x4(new Vector4(1,0,0,0), new Vector4(0,1,0,0), new Vector4(0,0,1,0), new Vector4(0,0,0,1)),
+        new Matrix4x4(new Vector4(1,0,0,0), new Vector4(0,1,0,0), new Vector4(0,0,1,0), new Vector4(0,0,0,1)),
+        new Matrix4x4(new Vector4(1,0,0,0), new Vector4(0,1,0,0), new Vector4(0,0,1,0), new Vector4(0,0,0,1)),
     };
+    // return camera matrices
+    private Matrix4x4[] matrixBufferData = new Matrix4x4[MATRIX_BUFFER_LEN / sizeof(float) / 16]; // 16 is size of matrices
 
     private Thread receiverThread;
     private bool threadRunning = false;
+
+    StreamingManager manager;
+    private const int PIXEL_DATA_LEN = 960 * 1080 * 3 * 4;
+    private byte[] rawPixelData = new byte[PIXEL_DATA_LEN];
 
     // https://stackoverflow.com/a/6803109
     public static string GetLocalIPAddress() {
@@ -77,20 +87,8 @@ public class UdpStreamingClient : MonoBehaviour {
         this.groupEP = new IPEndPoint(this.client, UdpStreamingClient.TRACKING_PORT);
         this.receiverThread = new Thread(this.TrackingReceiveThread);
         this.receiverThread.Start();
-    }
 
-    private void Update() {
-        //byte[] receiveBytes = this.listener.Receive(ref this.groupEP);
-        //SocketAsyncEventArgs e = new SocketAsyncEventArgs();
-        //e.Completed += new EventHandler<SocketAsyncEventArgs>(this.ReceiveUdpData);
-        //Array.Clear(this.matrixBufferData, 0, MATRIX_BUFFER_LEN);
-        //e.SetBuffer(matrixBufferData, 0, MATRIX_BUFFER_LEN);
-        //this.listener.Client.ReceiveAsync(e);
-
-        //Buffer.BlockCopy(receiveBytes, 0, floatBufferData, 0, receiveBytes.Length);
-        //if (dataFlag == false) {
-        //    dataFlag = true;
-        //}
+        manager = GameObject.Find("StreamingManager").GetComponent<StreamingManager>();
     }
 
     void OnDisable() {
@@ -105,8 +103,13 @@ public class UdpStreamingClient : MonoBehaviour {
 
             SocketAsyncEventArgs e = new SocketAsyncEventArgs();
             e.Completed += new EventHandler<SocketAsyncEventArgs>(this.ReceiveUdpData);
-            e.SetBuffer(matrixBufferData, 0, MATRIX_BUFFER_LEN);
+            e.SetBuffer(rawBufferData, 0, MATRIX_BUFFER_LEN);
             this.listener.Client.ReceiveAsync(e);
+
+            SocketAsyncEventArgs f = new SocketAsyncEventArgs();
+            f.Completed += new EventHandler<SocketAsyncEventArgs>(this.SendTextureDataToServer);
+            f.SetBuffer(rawPixelData, 0, PIXEL_DATA_LEN);
+            this.listener.Client.SendAsync(f);
 
             // Run this loop at 100fps
             Thread.Sleep(1);
@@ -115,28 +118,47 @@ public class UdpStreamingClient : MonoBehaviour {
     }
 
     void ReceiveUdpData(object sender, SocketAsyncEventArgs e) {
-        //string s = "";
-        //string q = "";
-        //foreach (byte b in e.Buffer) {
-        //    s += string.Format("{0:X} ", b);
-        //    q += (char)b;
-        //}
 
         Buffer.BlockCopy(e.Buffer, 0, floatBufferData, 0, e.Buffer.Length);
-        //Debug.Log(s);
-        //Debug.Log(q);
-        //System.IO.File.WriteAllBytes("dummyfile.txt", e.Buffer);
+
+        // Turn floats into matrices
+        for (int i = 0; i < matrixBufferData.Length; i++) { // Run through each matrix
+            int start = i * 16;
+            for (int r = 0; r < 4; r++) {
+                int offset = 4 * r;
+
+                float[] floatRow = util.Utility.SubArray<float>(floatBufferData, start + offset, 4);
+                Vector4 row;
+                if (r != 2) { // Unity camera space follows -z is forward, so must negate 3rd row
+                    row = new Vector4(floatRow[0], floatRow[1], floatRow[2], floatRow[3]);
+                } else {
+                    row = new Vector4(-floatRow[0], -floatRow[1], -floatRow[2], -floatRow[3]);
+                }
+                matrixBufferData[i].SetRow(r, row);
+            }
+        }
 
         if (dataFlag == false) {
             dataFlag = true;
         }
     }
 
-    public float[] GetMatrixDataFromServer() {
+    public Matrix4x4[] GetMatrixDataFromServer() {
         if (!dataFlag) {
-            return identifyBufferData;
+            return identityMatrixBufferData;
         }
-        return floatBufferData;
+        return matrixBufferData;
+    }
 
+    public void SendTextureDataToServer(object sender, SocketAsyncEventArgs f) {
+        // Get our data as a byte[][]
+        byte[][] p = manager.GetPixels();
+        int length = 0;
+        for (int i = 0; i < p.Length; i++) {
+            length += p[i].Length;
+        }
+
+        // Change data into a byte[]
+        Buffer.BlockCopy(manager.GetPixels().SelectMany(i => i).ToArray(), 0, rawPixelData, 0, length);
     }
 }

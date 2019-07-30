@@ -44,9 +44,6 @@ public class StreamingManager : MonoBehaviour {
 
         // We now have our viewMatrices, time to render to textures and get the pixel data
         SceneToTexture();
-
-        // We now have our pixel data in bytes, need to send it to SGCT server
-
     }
 
     void Init() {
@@ -74,40 +71,26 @@ public class StreamingManager : MonoBehaviour {
         textures = new Texture2D[instances];
         rects = new Rect[instances];
         pixels = new byte[instances][];
+
+        int width = (int)(1280 * (3.0f / 4.0f));
+        int height = (int)(1440 * (3.0f / 4.0f));
+        for (int i = 0; i < instances; i++) {
+            textures[i] = new Texture2D(width, height, TextureFormat.RGB24, false);
+            renderTextures[i] = new RenderTexture(width, height, 24);
+            rects[i] = new Rect(0, 0, width, height);
+            pixels[i] = new byte[width * height * 3]; // 4 channels
+        }
     }
 
     void UpdateMatrices() {
 
         // Grab our view matrices from our Server
-        // Data is in bytes, need to turn into floats
-        //viewMatricesBytes = _udpStreamingClient.GetMatrixDataFromServer();
-        //if (viewMatricesFloats == null) {
-        //    viewMatricesFloats = new float[viewMatricesBytes.Length / sizeof(float)];
-        //}
-        //Buffer.BlockCopy(viewMatricesBytes, 0, viewMatricesFloats, 0, viewMatricesBytes.Length);
+        viewMatrices = _udpStreamingClient.GetMatrixDataFromServer();
 
-        viewMatricesFloats = _udpStreamingClient.GetMatrixDataFromServer();
-
-        // Turn floats into matrices
-        for (int i = 0; i < instances; i++) { // Run through each matrix
-            int start = i * 16;
-            for (int r = 0; r < 4; r++) {
-                int offset = 4 * r;
-
-                float[] floatRow = util.Utility.SubArray<float>(viewMatricesFloats, start + offset, 4);
-                Vector4 row;
-                if (r != 2) { // Unity camera space follows -z is forward, so must negate 3rd row
-                    row = new Vector4(floatRow[0], floatRow[1], floatRow[2], floatRow[3]);
-                } else {
-                    row = new Vector4(-floatRow[0], -floatRow[1], -floatRow[2], -floatRow[3]);
-                }
-                viewMatrices[i].SetRow(r, row);
-            }
-
-            // Update Camera
+        // Update Camera
+        for (int i = 0; i < viewMatrices.Length; i++) {
             cameras[i].worldToCameraMatrix = viewMatrices[i];
         }
-
     }
 
     void SceneToTexture() {
@@ -116,22 +99,11 @@ public class StreamingManager : MonoBehaviour {
         // setup variables if not done already
         for (int i = 0; i < instances; i++) {
             // Cache size of camera shot
-            int width = cameras[i].scaledPixelWidth;
-            int height = cameras[i].scaledPixelHeight;
+            //int width = cameras[i].scaledPixelWidth;
+            //int height = cameras[i].scaledPixelHeight;
+            int width = (int)(1280 * (3.0f / 4.0f));
+            int height = (int)(1440 * (3.0f / 4.0f));
 
-            // Check for init
-            if (textures[i] == null) {
-                textures[i] = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            }
-            if (renderTextures[i] == null) {
-                renderTextures[i] = new RenderTexture(width, height, 32);
-            }
-            if (rects[i] == null) {
-                rects[i] = new Rect(0, 0, width, height);
-            }
-            //if (pixels[i] == null) {
-            //    pixels[i] = new byte[width * height];
-            //}
 
             // Connect camera to renderTexture and render
             cameras[i].targetTexture = renderTextures[i];
@@ -144,11 +116,12 @@ public class StreamingManager : MonoBehaviour {
 
             // Clean-up
             RenderTexture.active = null;
-
             // Get pixel data
-            pixels[i] = textures[i].GetRawTextureData();
+            Array.Copy(textures[i].GetRawTextureData(), pixels[i], pixels[i].Length);
         }
-
     }
 
+    public byte[][] GetPixels() {
+        return pixels;
+    }
 }
