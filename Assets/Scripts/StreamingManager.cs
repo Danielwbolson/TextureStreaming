@@ -15,10 +15,6 @@ public class StreamingManager : MonoBehaviour {
     // Reference to our client which will interact with SGCT server
     UdpStreamingClient _udpStreamingClient;
 
-    // Data from Server that is assumed to be a concatenated array of floats, row by row
-    //byte[] viewMatricesBytes = null;
-    float[] viewMatricesFloats = null;
-
     // View matrices created from data from server
     Matrix4x4[] viewMatrices;
 
@@ -72,13 +68,14 @@ public class StreamingManager : MonoBehaviour {
         rects = new Rect[instances];
         pixels = new byte[instances][];
 
-        int width = (int)(1280 * (3.0f / 4.0f));
-        int height = (int)(1440 * (3.0f / 4.0f));
+        int width = 512;  // (int)(1280 * (3.0f / 4.0f)); // for cave w/upsampling
+        int height = 512; // (int)(1440 * (3.0f / 4.0f)); // for cave w/upsampling
         for (int i = 0; i < instances; i++) {
             textures[i] = new Texture2D(width, height, TextureFormat.RGB24, false);
             renderTextures[i] = new RenderTexture(width, height, 24);
             rects[i] = new Rect(0, 0, width, height);
-            pixels[i] = new byte[width * height * 3]; // 4 channels
+            //pixels[i] = new byte[width * height * 3]; // 3 channels
+            pixels[i] = new byte[7896]; //jpg with 75% quality
         }
     }
 
@@ -101,9 +98,6 @@ public class StreamingManager : MonoBehaviour {
             // Cache size of camera shot
             //int width = cameras[i].scaledPixelWidth;
             //int height = cameras[i].scaledPixelHeight;
-            int width = (int)(1280 * (3.0f / 4.0f));
-            int height = (int)(1440 * (3.0f / 4.0f));
-
 
             // Connect camera to renderTexture and render
             cameras[i].targetTexture = renderTextures[i];
@@ -117,7 +111,7 @@ public class StreamingManager : MonoBehaviour {
             // Clean-up
             RenderTexture.active = null;
             // Get pixel data
-            Array.Copy(textures[i].GetRawTextureData(), pixels[i], pixels[i].Length);
+            pixels[i] = textures[i].EncodeToJPG(75); // 75% ? default
         }
     }
 

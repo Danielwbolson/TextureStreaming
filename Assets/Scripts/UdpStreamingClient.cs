@@ -17,17 +17,26 @@ using System.Threading;
 public class UdpStreamingClient : MonoBehaviour {
     public bool dataFlag = false;
 
+    // Referene to manager in scene
+    StreamingManager manager;
+
+
+    /***** * * * * * SERVER VARS * * * * * ******/
     // Where the server is running
     private string registerClientUrl = "http://localhost:5000";
-    private IPAddress client = IPAddress.Parse("0.0.0.0");
+    private IPAddress client = IPAddress.Parse("192.168.2.80");
     private const int TRACKING_PORT = 5001;
 
     private UdpClient listener;
     private IPEndPoint groupEP;
 
-    private const int MATRIX_BUFFER_LEN = 256;
+    private Thread receiverThread;
+    private bool threadRunning = false;
 
+
+    /***** * * * * * BUFFER/MEMORY VARS * * * * * *****/
     // Raw bytes from SGCt
+    private const int MATRIX_BUFFER_LEN = 256;
     private byte[] rawBufferData = new byte[MATRIX_BUFFER_LEN];
     // Turn bytes into float array
     private float[] floatBufferData = new float[MATRIX_BUFFER_LEN / sizeof(float)];
@@ -41,43 +50,9 @@ public class UdpStreamingClient : MonoBehaviour {
     // return camera matrices
     private Matrix4x4[] matrixBufferData = new Matrix4x4[MATRIX_BUFFER_LEN / sizeof(float) / 16]; // 16 is size of matrices
 
-    private Thread receiverThread;
-    private bool threadRunning = false;
-
-    StreamingManager manager;
-    private const int PIXEL_DATA_LEN = 960 * 1080 * 3 * 4;
+    // Pixel buffers to send to sgct
+    private const int PIXEL_DATA_LEN = 7896 * 4; //64 * 64 * 3 * 4; // 960 * 1080 * 3 * 4; // width, height, channels, screens
     private byte[] rawPixelData = new byte[PIXEL_DATA_LEN];
-
-    // https://stackoverflow.com/a/6803109
-    public static string GetLocalIPAddress() {
-        var host = Dns.GetHostEntry(Dns.GetHostName());
-        foreach (var ip in host.AddressList) {
-            if (ip.AddressFamily == AddressFamily.InterNetwork) {
-                return ip.ToString();
-            }
-        }
-        throw new Exception("No network adapters with an IPv4 address in the system!");
-    }
-
-    IEnumerator RegisterServer(bool register) {
-        Debug.Log("Registering with server");
-        string query;
-        if (register) {
-            query = String.Format("{0}/register?ip={1}", this.registerClientUrl, GetLocalIPAddress());
-        } else {
-            query = String.Format("{0}/unregister", this.registerClientUrl);
-        }
-        UnityWebRequest uwr = UnityWebRequest.Get(query);
-        yield return uwr.SendWebRequest();
-
-
-        if (!uwr.isNetworkError) {
-            Debug.Log("Success!");
-            Debug.Log(uwr.downloadHandler.text);
-        } else {
-            Debug.LogError("(Tracking) Error While Registering: " + uwr.error);
-        }
-    }
 
 
     void Start() {
@@ -109,7 +84,8 @@ public class UdpStreamingClient : MonoBehaviour {
             SocketAsyncEventArgs f = new SocketAsyncEventArgs();
             f.Completed += new EventHandler<SocketAsyncEventArgs>(this.SendTextureDataToServer);
             f.SetBuffer(rawPixelData, 0, PIXEL_DATA_LEN);
-            this.listener.Client.SendAsync(f);
+            f.RemoteEndPoint = groupEP;
+            this.listener.Client.SendToAsync(f);
 
             // Run this loop at 100fps
             Thread.Sleep(1);
@@ -143,14 +119,8 @@ public class UdpStreamingClient : MonoBehaviour {
         }
     }
 
-    public Matrix4x4[] GetMatrixDataFromServer() {
-        if (!dataFlag) {
-            return identityMatrixBufferData;
-        }
-        return matrixBufferData;
-    }
-
-    public void SendTextureDataToServer(object sender, SocketAsyncEventArgs f) {
+    // Called by asynchronous events to send data to server
+    void SendTextureDataToServer(object sender, SocketAsyncEventArgs f) {
         // Get our data as a byte[][]
         byte[][] p = manager.GetPixels();
         int length = 0;
@@ -159,6 +129,46 @@ public class UdpStreamingClient : MonoBehaviour {
         }
 
         // Change data into a byte[]
-        Buffer.BlockCopy(manager.GetPixels().SelectMany(i => i).ToArray(), 0, rawPixelData, 0, length);
+        Buffer.BlockCopy(p.SelectMany(a => a).ToArray(), 0, rawPixelData, 0, length);
     }
+
+    // Allows StreamingManager access to the matrix data
+    public Matrix4x4[] GetMatrixDataFromServer() {
+        if (!dataFlag) {
+            return identityMatrixBufferData;
+        }
+        return matrixBufferData;
+    }
+
+    // https://stackoverflow.com/a/6803109
+    public static string GetLocalIPAddress() {
+        var host = Dns.GetHostEntry(Dns.GetHostName());
+        foreach (var ip in host.AddressList) {
+            if (ip.AddressFamily == AddressFamily.InterNetwork) {
+                return ip.ToString();
+            }
+        }
+        throw new Exception("No network adapters with an IPv4 address in the system!");
+    }
+
+    IEnumerator RegisterServer(bool register) {
+        Debug.Log("Registering with server");
+        string query;
+        if (register) {
+            query = String.Format("{0}/register?ip={1}", this.registerClientUrl, GetLocalIPAddress());
+        } else {
+            query = String.Format("{0}/unregister", this.registerClientUrl);
+        }
+        UnityWebRequest uwr = UnityWebRequest.Get(query);
+        yield return uwr.SendWebRequest();
+
+
+        if (!uwr.isNetworkError) {
+            Debug.Log("Success!");
+            Debug.Log(uwr.downloadHandler.text);
+        } else {
+            Debug.LogError("(Tracking) Error While Registering: " + uwr.error);
+        }
+    }
+
 }
