@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using UnityEngine;
 
 // This class manages streaming of information between the Unity Client and the SGCT Server
@@ -24,11 +26,20 @@ public class StreamingManager : MonoBehaviour {
     Rect[] rects;
     byte[][] pixels;
 
+    int width = 1280 / 2;  // (int)(1280 * (3.0f / 4.0f)); // for cave w/upsampling
+    int height = 1440 / 2; // (int)(1440 * (3.0f / 4.0f)); // for cave w/upsampling
+
     // Start is called before the first frame update
     void Start() {
 
         // Initialize all variables and arrays
         Init();
+
+        Debug.Log(Mathf.Min(100, -5000));
+
+        
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = 120;
 
     }
 
@@ -39,7 +50,7 @@ public class StreamingManager : MonoBehaviour {
         UpdateMatrices();
 
         // We now have our viewMatrices, time to render to textures and get the pixel data
-        SceneToTexture();
+        StartCoroutine(SceneToTexture());
     }
 
     void Init() {
@@ -68,14 +79,12 @@ public class StreamingManager : MonoBehaviour {
         rects = new Rect[instances];
         pixels = new byte[instances][];
 
-        int width = 512;  // (int)(1280 * (3.0f / 4.0f)); // for cave w/upsampling
-        int height = 512; // (int)(1440 * (3.0f / 4.0f)); // for cave w/upsampling
         for (int i = 0; i < instances; i++) {
             textures[i] = new Texture2D(width, height, TextureFormat.RGB24, false);
             renderTextures[i] = new RenderTexture(width, height, 24);
             rects[i] = new Rect(0, 0, width, height);
-            //pixels[i] = new byte[width * height * 3]; // 3 channels
-            pixels[i] = new byte[7896]; //jpg with 75% quality
+            pixels[i] = new byte[width * height * 3]; // 3 channels
+            //pixels[i] = new byte[7896]; //jpg with 75% quality
         }
     }
 
@@ -90,32 +99,50 @@ public class StreamingManager : MonoBehaviour {
         }
     }
 
-    void SceneToTexture() {
+    IEnumerator SceneToTexture() {
 
         // Run through everything and render each camera
         // setup variables if not done already
         for (int i = 0; i < instances; i++) {
             // Cache size of camera shot
-            //int width = cameras[i].scaledPixelWidth;
-            //int height = cameras[i].scaledPixelHeight;
 
             // Connect camera to renderTexture and render
             cameras[i].targetTexture = renderTextures[i];
             cameras[i].Render();
             RenderTexture.active = renderTextures[i];
 
-            // Read in rendering to a texture
-            textures[i].ReadPixels(rects[i], 0, 0);
-            textures[i].Apply();
+            // Asynchrously request rendertexture data from GPU
+            UnityEngine.Rendering.AsyncGPUReadbackRequest request = UnityEngine.Rendering.AsyncGPUReadback.Request(renderTextures[i], 0);
+            while (!request.done) {
+                yield return new WaitForEndOfFrame();
+            }
+            pixels[i] = request.GetData<byte>().ToArray();
 
-            // Clean-up
-            RenderTexture.active = null;
-            // Get pixel data
-            pixels[i] = textures[i].EncodeToJPG(75); // 75% ? default
+            Texture2D tex = new Texture2D(width, height, TextureFormat.RGB24, false);
+            tex.LoadImage(pixels[i]);
+
+            pixels[i] = tex.EncodeToPNG();
+
+            //    Texture2D.
+            //    // Read in rendering to a texture
+            //    textures[i].ReadPixels(rects[i], 0, 0);
+            //    textures[i].Apply();
+
+            //    // Clean-up
+            //    RenderTexture.active = null;
+            //    // Get pixel data
+            //    pixels[i] = ImageConversion.EncodeToPNG(textures[i]); // 75% ? default
         }
     }
 
-    public byte[][] GetPixels() {
-        return pixels;
+    public void GetPixels(out byte[][] p, out int[] pS) {
+        // Init arrays
+        pS = new int[instances];
+        for (int i = 0; i < instances; i++) {
+            pS[i] = pixels[i].Length;
+        }
+
+        // Copy over so we don't have a reference
+        p = pixels.Select(a => a.ToArray()).ToArray();
     }
 }
