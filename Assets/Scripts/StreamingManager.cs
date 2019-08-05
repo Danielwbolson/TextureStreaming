@@ -34,9 +34,6 @@ public class StreamingManager : MonoBehaviour {
 
         // Initialize all variables and arrays
         Init();
-
-        Debug.Log(Mathf.Min(100, -5000));
-
         
         QualitySettings.vSyncCount = 0;
         Application.targetFrameRate = 120;
@@ -51,6 +48,8 @@ public class StreamingManager : MonoBehaviour {
 
         // We now have our viewMatrices, time to render to textures and get the pixel data
         StartCoroutine(SceneToTexture());
+
+        GC.Collect();
     }
 
     void Init() {
@@ -104,8 +103,6 @@ public class StreamingManager : MonoBehaviour {
         // Run through everything and render each camera
         // setup variables if not done already
         for (int i = 0; i < instances; i++) {
-            // Cache size of camera shot
-
             // Connect camera to renderTexture and render
             cameras[i].targetTexture = renderTextures[i];
             cameras[i].Render();
@@ -118,31 +115,21 @@ public class StreamingManager : MonoBehaviour {
             }
             pixels[i] = request.GetData<byte>().ToArray();
 
+            // We want to get our pixel data in png form, which requires creating a new texture2D
             Texture2D tex = new Texture2D(width, height, TextureFormat.RGB24, false);
             tex.LoadImage(pixels[i]);
-
             pixels[i] = tex.EncodeToPNG();
 
-            //    Texture2D.
-            //    // Read in rendering to a texture
-            //    textures[i].ReadPixels(rects[i], 0, 0);
-            //    textures[i].Apply();
-
-            //    // Clean-up
-            //    RenderTexture.active = null;
-            //    // Get pixel data
-            //    pixels[i] = ImageConversion.EncodeToPNG(textures[i]); // 75% ? default
+            // Clean-up
+            RenderTexture.active = null;
         }
     }
 
-    public void GetPixels(out byte[][] p, out int[] pS) {
-        // Init arrays
-        pS = new int[instances];
-        for (int i = 0; i < instances; i++) {
-            pS[i] = pixels[i].Length;
-        }
-
+    public void GetPixels(out byte[][] p) {
         // Copy over so we don't have a reference
-        p = pixels.Select(a => a.ToArray()).ToArray();
+        p = new byte[instances][];
+        for (int i = 0; i < instances; i++) {
+            p[i] = pixels[i].Select(a => a).ToArray();
+        }
     }
 }

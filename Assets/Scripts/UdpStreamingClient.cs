@@ -60,10 +60,8 @@ public class UdpStreamingClient : MonoBehaviour {
     private const int initNumChunks = 10;
     private int[] numChunks;
     private byte[][] rawPixelData;
-    private int[] rawPixelLength;
     private byte[][][] rawPixelChunks;
     private byte[][][] finalPixelChunks;
-    //private int[][] rawPixelChunkLengths;
 
 
     void Start() {
@@ -87,22 +85,17 @@ public class UdpStreamingClient : MonoBehaviour {
 
         // Init of pixel data to avoid errors on pixel data
         rawPixelData = new byte[instances][];
-        rawPixelLength = new int[instances];
         rawPixelChunks = new byte[instances][][];
         finalPixelChunks = new byte[instances][][];
-        //rawPixelChunkLengths = new int[instances][];
         numChunks = new int[instances];
         for (int i = 0; i < instances; i++) {
             rawPixelData[i] = new byte[chunkLength];
-            rawPixelLength[i] = chunkLength;
             rawPixelChunks[i] = new byte[initNumChunks][];
             finalPixelChunks[i] = new byte[initNumChunks][];
-            //rawPixelChunkLengths[i] = new int[initNumChunks];
             numChunks[i] = initNumChunks;
             for (int j = 0; j < initNumChunks; j++) {
                 rawPixelChunks[i][j] = new byte[chunkLength];
                 finalPixelChunks[i][j] = new byte[chunkLength];
-                //rawPixelChunkLengths[i][j] = chunkLength;
             }
         }
     }
@@ -118,16 +111,19 @@ public class UdpStreamingClient : MonoBehaviour {
         this.threadRunning = true;
         while (threadRunning) {
 
+            // Asynchronous getting of data from SGCT
             SocketAsyncEventArgs e = new SocketAsyncEventArgs();
             e.Completed += new EventHandler<SocketAsyncEventArgs>(this.ReceiveUdpData);
             e.SetBuffer(rawMatrixData, 0, MATRIX_BUFFER_LEN);
             e.RemoteEndPoint = matrixEP;
             this.matrixListener.Client.ReceiveAsync(e);
 
+            // Populate our udp packets to send
             lock (mutex) {
                 PopulateBuffers();
             }
 
+            // Aynchronous sending of data in packets to SGCT
             for (int i = 0; i < rawPixelChunks.Length; i++) {
                 for (int j = 0; j < rawPixelChunks[i].Length; j++) {
                     SocketAsyncEventArgs f = new SocketAsyncEventArgs();
@@ -173,7 +169,7 @@ public class UdpStreamingClient : MonoBehaviour {
     void PopulateBuffers() {
 
         // Get our data as a byte[][] and each byte buffer's length in pixels
-        manager.GetPixels(out rawPixelData, out rawPixelLength);
+        manager.GetPixels(out rawPixelData);
 
         // Break our data into chunks
         // which instance, which chunk is this, total chunks, how long is the buffer, lastpixelIndex
@@ -183,10 +179,10 @@ public class UdpStreamingClient : MonoBehaviour {
         // Offset for our metadata
         int actualPixelChunkSize = chunkLength - metaOffset;
 
-        for (int i = 0; i < rawPixelLength.Length; i++) {
+        for (int i = 0; i < rawPixelData.Length; i++) {
 
             // Get how many chunks we are going to need for each image
-            numChunks[i] = Mathf.CeilToInt((float)rawPixelLength[i] / (float)actualPixelChunkSize);
+            numChunks[i] = Mathf.CeilToInt((float)rawPixelData[i].Length / (float)actualPixelChunkSize);
 
             // Re-init our chunk array to the correct number of chunks
             rawPixelChunks[i] = new byte[numChunks[i]][];
@@ -195,7 +191,7 @@ public class UdpStreamingClient : MonoBehaviour {
             for (int j = 0; j < numChunks[i]; j++) {
                 // Fill our chunkBuffer with chunks of size actualPixelChunkSize (save room for metadata) from the raw data
                 // IF we do not have enough to fill the chunk size, grab the rest of the bytes
-                int lengthOfSubarray = Mathf.Min(actualPixelChunkSize, rawPixelLength[i] - (j * actualPixelChunkSize));
+                int lengthOfSubarray = Mathf.Min(actualPixelChunkSize, rawPixelData[i].Length - (j * actualPixelChunkSize));
                 rawPixelChunks[i][j] = util.Utility.SubArray<byte>(rawPixelData[i], j * actualPixelChunkSize, lengthOfSubarray);
 
                 // Get our metadata
